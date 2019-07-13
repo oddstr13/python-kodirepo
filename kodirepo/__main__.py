@@ -66,8 +66,9 @@ import threading
 import xml.etree.ElementTree
 import zipfile
 
-import click
 import git
+import click
+import semantic_version
 
 
 AddonMetadata = collections.namedtuple(
@@ -99,6 +100,19 @@ def get_metadata_basenames(addon_metadata):
 def is_url(addon_location):
     return bool(re.match('[A-Za-z0-9+.-]+://.', addon_location))
 
+class AddonVersion(semantic_version.Version):
+    # The specification for version numbers is at http://semver.org/.
+    # The Kodi documentation at
+    # http://kodi.wiki/index.php?title=Addon.xml#How_versioning_works
+    # adds a twist by recommending a tilde instead of a hyphen.
+    # https://github.com/xbmc/xbmc/blob/master/xbmc/addons/AddonVersion.cpp#L20L24
+
+    @classmethod
+    def parse(cls, version_string, partial=False, coerce=False):
+        return super().parse(version_string.replace('~', '-'), partial=partial, coerce=coerce)
+
+    def __str__(self):
+        return super().__str__().replace('-', '~')
 
 def parse_metadata(metadata_file):
     # Parse the addon.xml metadata.
@@ -106,25 +120,22 @@ def parse_metadata(metadata_file):
         tree = xml.etree.ElementTree.parse(metadata_file)
     except IOError:
         raise RuntimeError('Cannot open addon metadata: {}'.format(metadata_file))
+
     root = tree.getroot()
+
     addon_metadata = AddonMetadata(
         root.get('id'),
-        root.get('version'),
-        root)
+        AddonVersion(root.get('version')),
+        root
+    )
+    root.set('version', addon_metadata.version)
+
     # Validate the add-on ID.
+    # https://kodi.wiki/index.php?title=Addon.xml#id_attribute
     if (addon_metadata.id is None or
             re.search('[^a-z0-9._-]', addon_metadata.id)):
         raise RuntimeError('Invalid addon ID: {}'.format(addon_metadata.id))
-    if (addon_metadata.version is None or
-            not re.match(
-                # The specification for version numbers is at http://semver.org/.
-                # The Kodi documentation at
-                # http://kodi.wiki/index.php?title=Addon.xml&oldid=128873#How_versioning_works
-                # adds a twist by recommending a tilde instead of a hyphen.
-                r'(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}(?:[-~][0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\Z',
-                addon_metadata.version)):
-        raise RuntimeError(
-            'Invalid addon verson: {}'.format(addon_metadata.version))
+
     return addon_metadata
 
 

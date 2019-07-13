@@ -7,6 +7,7 @@ setup(
     install_requires=[
         'GitPython',
         'click',
+        'semantic_version',
     ],
     entry_points='''
         [console_scripts]
