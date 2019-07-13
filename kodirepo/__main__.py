@@ -106,6 +106,7 @@ def get_metadata_basenames(addon_metadata):
 def is_url(addon_location):
     return bool(re.match('[A-Za-z0-9+.-]+://.', addon_location))
 
+
 class AddonVersion(semantic_version.Version):
     # The specification for version numbers is at http://semver.org/.
     # The Kodi documentation at
@@ -119,6 +120,7 @@ class AddonVersion(semantic_version.Version):
 
     def __str__(self):
         return super().__str__().replace('-', '~')
+
 
 def parse_metadata(metadata_file):
     # Parse the addon.xml metadata.
@@ -136,7 +138,7 @@ def parse_metadata(metadata_file):
     )
     root.set('version', addon_metadata.version)
 
-    logger.debug(addon_metadata)
+    logger.debug("Parsed %s v%s from %s", addon_metadata.id, addon_metadata.version, metadata_file)
 
     # Validate the add-on ID.
     # https://kodi.wiki/index.php?title=Addon.xml#id_attribute
@@ -291,6 +293,7 @@ def fetch_addon_from_zip(raw_addon_location, target_folder):
 
 
 def fetch_addon(addon_location, target_folder, result_slot):
+    logger.debug("Reading add-on from %r", addon_location)
     try:
         if is_url(addon_location):
             addon_metadata = fetch_addon_from_git(
@@ -304,7 +307,7 @@ def fetch_addon(addon_location, target_folder, result_slot):
         else:
             raise RuntimeError('Path not found: {}'.format(addon_location))
         result_slot.append(WorkerResult(addon_metadata, None))
-    except:
+    except RuntimeError:
         result_slot.append(WorkerResult(None, sys.exc_info()))
 
 
@@ -315,13 +318,49 @@ def get_addon_worker(addon_location, target_folder):
     return AddonWorker(thread, result_slot)
 
 
+def parse_repo(metadata_file):
+    # Parse the addons.xml metadata.
+    try:
+        tree = xml.etree.ElementTree.parse(metadata_file)
+    except IOError:
+        raise RuntimeError('Cannot open addon metadata: {}'.format(metadata_file))
+
+    root = tree.getroot()
+
+    for addon_el in root:
+
+        addon_metadata = AddonMetadata(
+            addon_el.get('id'),
+            AddonVersion(addon_el.get('version')),
+            addon_el
+        )
+        addon_el.set('version', addon_metadata.version)
+
+        logger.debug("Parsed %s v%s from addons.xml", addon_metadata.id, addon_metadata.version)
+
+        # Validate the add-on ID.
+        # https://kodi.wiki/index.php?title=Addon.xml#id_attribute
+        if (addon_metadata.id is None or
+                re.search('[^a-z0-9._-]', addon_metadata.id)):
+            raise RuntimeError('Invalid addon ID: {}'.format(addon_metadata.id))
+
+        yield addon_metadata
+
+
 def create_repository(
         addon_locations,
         target_folder,
         info_path,
         checksum_path,
         is_compressed,
-        no_parallel):
+        no_parallel,
+        clobber=True):
+
+    if os.path.exists(info_path):
+        metadata = list(parse_repo(info_path))
+    else:
+        logger.warning("Could not find existing addons.xml, creating new at %r", info_path)
+        metadata = []
 
     # Create the target folder.
     if not os.path.isdir(target_folder):
@@ -341,7 +380,7 @@ def create_repository(
             worker.thread.join()
 
     # Collect the results from all the threads.
-    metadata = []
+    new_metadata = []
     for worker in workers:
         try:
             result = next(iter(worker.result_slot))
@@ -349,11 +388,29 @@ def create_repository(
             raise RuntimeError('Addon worker did not report result')
         if result.exc_info is not None:
             raise result.exc_info[1]
-        metadata.append(result.addon_metadata)
+        new_metadata.append(result.addon_metadata)
+
+    for addon_metadata in new_metadata:
+        version_exists = list(filter(lambda m: addon_metadata.id == m.id and addon_metadata.version == m.version, metadata))
+        if version_exists:
+            if clobber:
+                logger.warning("Clobbering %s v%s", addon_metadata.id, addon_metadata.version)
+                for old in version_exists:
+                    metadata.remove(old)
+            else:
+                raise RuntimeError("Refusing to overwrite %s v%s. See --clobber." % (addon_metadata.id, addon_metadata.version))
+
+        logger.info("Adding %s v%s", addon_metadata.id, addon_metadata.version)
+        metadata.append(addon_metadata)
+
+    # Sort items by id, then reversed version
+    metadata.sort(key=lambda m: m.version, reverse=True)
+    metadata.sort(key=lambda m: m.id)
 
     # Generate the addons.xml file.
     root = xml.etree.ElementTree.Element('addons')
     for addon_metadata in metadata:
+        logger.info("Writing %s v%s to addons.xml", addon_metadata.id, addon_metadata.version)
         root.append(addon_metadata.root)
     tree = xml.etree.ElementTree.ElementTree(root)
     if is_compressed:
@@ -365,16 +422,22 @@ def create_repository(
     is_binary = is_compressed
     generate_checksum(info_path, is_binary, checksum_path)
 
-class AddonSource(click.ParamType):
+
+class AddonSourceParam(click.ParamType):
     is_path = click.Path(exists=True, file_okay=True, dir_okay=True, readable=True)
 
     def validate(self, value, param, ctx):
         return is_url(value) or self.is_path(value, param, ctx)
 
 
-@click.command()
+@click.group()
 @click.version_option()
 @click_log.simple_verbosity_option(logger)
+def cli():
+    pass
+
+
+@cli.command('add')
 @click.option('--datadir', '-d',
     default='.',
     type=click.Path(exists=False, file_okay=False, dir_okay=True, writable=True),
@@ -396,14 +459,18 @@ class AddonSource(click.ParamType):
     show_default=True,
     help='Build add-on sources in parallel'
 )
+@click.option('--clobber/--no-clobber',
+    default=False,
+    show_default=True,
+    help='Overwrite existing versions'
+)
 @click.argument('addons',
     nargs=-1,
     required=True,
     metavar='ADDON...',
-    type=AddonSource(),
+    type=AddonSourceParam(),
 )
-
-def main(datadir, info, checksum, compress, parallel, addons):
+def main(datadir, info, checksum, compress, parallel, clobber, addons):
     '''
     Create a Kodi add-on repository from add-on sources
 
@@ -429,7 +496,12 @@ def main(datadir, info, checksum, compress, parallel, addons):
     else:
         checksum_path = '{}.md5'.format(info_path)
 
-    create_repository(addons, data_path, info_path, checksum_path, compress, not parallel)
+    try:
+        create_repository(addons, data_path, info_path, checksum_path, compress, not parallel, clobber)
+    except RuntimeError as e:
+        logger.error(e)
+        raise click.Abort()
+
 
 if __name__ == "__main__":
     main()

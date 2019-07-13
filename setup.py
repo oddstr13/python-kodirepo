@@ -12,7 +12,7 @@ setup(
     ],
     entry_points='''
         [console_scripts]
-        kodirepo=kodirepo.__main__:main
+        kodirepo=kodirepo.__main__:cli
     ''',
     zip_safe=True,
 )
