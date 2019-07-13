@@ -67,6 +67,7 @@ import xml.etree.ElementTree
 import zipfile
 
 import click
+import git
 
 
 AddonMetadata = collections.namedtuple(
@@ -302,14 +303,6 @@ def create_repository(
         checksum_path,
         is_compressed,
         no_parallel):
-    # Import git lazily.
-    if any(is_url(addon_location) for addon_location in addon_locations):
-        try:
-            global git
-            import git
-        except ImportError:
-            raise RuntimeError(
-                'Please install GitPython: pip install gitpython')
 
     # Create the target folder.
     if not os.path.isdir(target_folder):
