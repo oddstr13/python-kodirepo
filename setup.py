@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-from kodirepo.__main__ import __version__ as version
+from kodirepo.version import version
 
 setup(
     name='kodirepo',
