@@ -65,10 +65,16 @@ import tempfile
 import threading
 import xml.etree.ElementTree
 import zipfile
+import logging
 
 import git
 import click
+import click_log
 import semantic_version
+
+
+logger = logging.getLogger("kodirepo")
+click_log.basic_config(logger)
 
 
 AddonMetadata = collections.namedtuple(
@@ -129,6 +135,8 @@ def parse_metadata(metadata_file):
         root
     )
     root.set('version', addon_metadata.version)
+
+    logger.debug(addon_metadata)
 
     # Validate the add-on ID.
     # https://kodi.wiki/index.php?title=Addon.xml#id_attribute
@@ -366,6 +374,7 @@ class AddonSource(click.ParamType):
 
 @click.command()
 @click.version_option()
+@click_log.simple_verbosity_option(logger)
 @click.option('--datadir', '-d',
     default='.',
     type=click.Path(exists=False, file_okay=False, dir_okay=True, writable=True),

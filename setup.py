@@ -7,6 +7,7 @@ setup(
     install_requires=[
         'GitPython',
         'click',
+        'click-log',
         'semantic_version',
     ],
     entry_points='''
