@@ -1,8 +1,10 @@
 from setuptools import setup, find_packages
 
+from kodirepo.__main__ import __version__ as version
+
 setup(
     name='kodirepo',
-    version='2.3.0',
+    version=version,
     packages=find_packages(),
     install_requires=[
         'GitPython',
