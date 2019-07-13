@@ -6,6 +6,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         'GitPython',
+        'click',
     ],
     entry_points='''
         [console_scripts]

@@ -53,7 +53,6 @@ __license__ = "GNU GENERAL PUBLIC LICENSE. Version 2, June 1991"
 __version__ = "2.3.0"
 
 
-import argparse
 import collections
 import gzip
 import hashlib
@@ -66,6 +65,8 @@ import tempfile
 import threading
 import xml.etree.ElementTree
 import zipfile
+
+import click
 
 
 AddonMetadata = collections.namedtuple(
@@ -352,59 +353,70 @@ def create_repository(
     is_binary = is_compressed
     generate_checksum(info_path, is_binary, checksum_path)
 
+class AddonSource(click.ParamType):
+    is_path = click.Path(exists=True, file_okay=True, dir_okay=True, readable=True)
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Create a Kodi add-on repository from add-on sources')
-    parser.add_argument(
-        '--datadir',
-        '-d',
-        default='.',
-        help='Path to place the add-ons [current directory]')
-    parser.add_argument(
-        '--info',
-        '-i',
-        help='''Path for the addons.xml file [DATADIR/addons.xml or
-                DATADIR/addons.xml.gz if compressed]''')
-    parser.add_argument(
-        '--checksum',
-        '-c',
-        help='Path for the addons.xml.md5 file [INFO.md5]')
-    parser.add_argument(
-        '--compressed',
-        '-z',
-        action='store_true',
-        help='Compress addons.xml with gzip')
-    parser.add_argument(
-        '--no-parallel',
-        '-n',
-        action='store_true',
-        help='Build add-on sources serially')
-    parser.add_argument(
-        'addon',
-        nargs='*',
-        metavar='ADDON',
-        help='''Location of the add-on: either a path to a local folder or
-                to a zip archive or a URL for a Git repository with the
-                format REPOSITORY_URL#BRANCH:PATH''')
-    args = parser.parse_args()
+    def validate(self, value, param, ctx):
+        return is_url(value) or self.is_path(value, param, ctx)
 
-    data_path = os.path.expanduser(args.datadir)
-    if args.info is None:
-        if args.compressed:
+
+@click.command()
+@click.version_option()
+@click.option('--datadir', '-d',
+    default='.',
+    type=click.Path(exists=False, file_okay=False, dir_okay=True, writable=True),
+    help='Path to place the add-ons [current directory]',
+)
+@click.option('--info', '-i',
+    help='''Path for the addons.xml file [DATADIR/addons.xml or
+            DATADIR/addons.xml.gz if compressed]''',
+)
+@click.option('--checksum', '-c',
+    help='Path for the addons.xml.md5 file [INFO.md5]'
+)
+@click.option('--compress/--no-compress', '-z/', '--compressed/',
+    default=False,
+    help='Compress addons.xml with gzip'
+)
+@click.option('--parallel/--no-parallel', ' /-n',
+    default=True,
+    show_default=True,
+    help='Build add-on sources in parallel'
+)
+@click.argument('addons',
+    nargs=-1,
+    required=True,
+    metavar='ADDON...',
+    type=AddonSource(),
+)
+
+def main(datadir, info, checksum, compress, parallel, addons):
+    '''
+    Create a Kodi add-on repository from add-on sources
+
+    ADDON can be one or more;
+    Path to local folder,
+    Path to add-on zip file, or
+    Git repo URL in the format URL#BRANCH:PATH
+    '''
+
+    data_path = os.path.expanduser(datadir)
+
+    if not info:
+        if compress:
             info_basename = 'addons.xml.gz'
         else:
             info_basename = 'addons.xml'
         info_path = os.path.join(data_path, info_basename)
     else:
-        info_path = os.path.expanduser(args.info)
+        info_path = os.path.expanduser(info)
 
-    checksum_path = (
-        os.path.expanduser(args.checksum) if args.checksum is not None
-        else '{}.md5'.format(info_path))
-    create_repository(
-        args.addon, data_path, info_path, checksum_path, args.compressed, args.no_parallel)
+    if checksum:
+        checksum_path = os.path.expanduser(checksum)
+    else:
+        checksum_path = '{}.md5'.format(info_path)
 
+    create_repository(addons, data_path, info_path, checksum_path, compress, not parallel)
 
 if __name__ == "__main__":
     main()
